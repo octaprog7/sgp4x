@@ -64,5 +64,5 @@ https://pypi.org/project/sensirion-gas-index-algorithm/
 
 # Картинки
 
-## Железо
+## Результат работы
 ![alt text](https://github.com/octaprog7/sgp4x/blob/master/pics/meas_vals.png)
