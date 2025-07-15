@@ -8,7 +8,7 @@ MicroPython SPG4X sensor 'driver'
 # from micropython import const
 from collections import namedtuple
 from sensor_pack_2 import bus_service
-from sensor_pack_2.base_sensor import IBaseSensorEx, DeviceEx, IDentifier, Iterator, check_value
+from sensor_pack_2.base_sensor import DeviceEx, IDentifier, Iterator, check_value
 from sensor_pack_2.crc_mod import crc8
 import time
 
@@ -21,12 +21,9 @@ serial_number_sgp4x = namedtuple("serial_number_sgp4x", "word_0 word_1 word_2")
 # которые требуется обработать c помощью Sensirion’s Gas Index Algorithm (https://pypi.org/project/sensirion-gas-index-algorithm/);
 measured_values_sgp4x = namedtuple("measured_values_sgp4x", "VOC NOx")
 
-def _calc_crc(sequence: bytes) -> int:
-    """Обертка для короткого вызова."""
-    return crc8(sequence, polynomial=0x31, init_value=0xFF)
 
-
-class SGP4X(IBaseSensorEx, IDentifier, Iterator):
+# IBaseSensorEx
+class SGP4X(IDentifier, Iterator):
     """Программное представление SGP4X - цифровых датчиков качества воздуха.
      Измеряет летучие органические соединения (ЛОС) и оксиды азота (NOx, только SGP41)."""
     # для SGP41!; Эта команда запускает кондиционирование, то есть пиксель VOC будет работать при той же температуре,
@@ -47,6 +44,12 @@ class SGP4X(IBaseSensorEx, IDentifier, Iterator):
     _cmd_get_serial_number = 0x3682
     # параметры ответа от датчика
     answer_params_sgp4x = namedtuple("answer_params_sgp4x", "length wait_time")
+
+    @staticmethod
+    def _calc_crc(sequence: bytes) -> int:
+        """Обертка для короткого вызова."""
+        return crc8(sequence, polynomial=0x31, init_value=0xFF)
+
 
     def __init__(self, adapter: bus_service.BusAdapter, address=0x59, sensor_id: int = 0, check_crc: bool = True):
         """
@@ -87,14 +90,14 @@ class SGP4X(IBaseSensorEx, IDentifier, Iterator):
             _l = 3
             _wt = 320
         if 1 == sensor_id and SGP4X._cmd_execute_conditioning == cmd_code:
-            _l = 3    # SGP41
+            _l = 3  # SGP41
             _wt = 50
         if SGP4X._cmd_measure_raw_signal == cmd_code:
             if 0 == sensor_id:
-                _l = 3    # для SGP40
+                _l = 3  # для SGP40
                 _wt = 30
             else:
-                _l = 6    # для SGP4Х
+                _l = 6  # для SGP4Х
                 _wt = 50
         if SGP4X._cmd_get_serial_number == cmd_code:
             _l = 9
@@ -114,9 +117,9 @@ class SGP4X(IBaseSensorEx, IDentifier, Iterator):
         # answ_length = 0, 3, 6
         for index in range(answ_length // 3):
             _start = 3 * index
-            if data:    # (0, 2), (3, 5), (6, 8) - индексы данных
+            if data:  # (0, 2), (3, 5), (6, 8) - индексы данных
                 yield range(_start, 2 + _start)
-            else: # (2, 3), (5, 6), (8, 9)  - индексы CRC
+            else:  # (2, 3), (5, 6), (8, 9)  - индексы CRC
                 yield range(2 + _start, 3 + _start)
 
     @staticmethod
@@ -173,10 +176,11 @@ class SGP4X(IBaseSensorEx, IDentifier, Iterator):
         answ_length - длина ответа от датчика в байтах."""
         SGP4X._check_answer_length(answ_length)
         for data_place in SGP4X._get_data_place(answ_length):
-            calculated_crc = _calc_crc(answer[data_place.start:data_place.stop])
+            calculated_crc = SGP4X._calc_crc(answer[data_place.start:data_place.stop])
             crc_from_buf = answer[data_place.stop]
             if calculated_crc != crc_from_buf:
-                raise ValueError(f"Неверная CRC! Вычислено: {calculated_crc}. CRC из буфера: {crc_from_buf}; Длина буфера: {len(answer)} байт.")
+                raise ValueError(
+                    f"Неверная CRC! Вычислено: {calculated_crc}. CRC из буфера: {crc_from_buf}; Длина буфера: {len(answer)} байт.")
         return True
 
     def _read_answer(self) -> [bytes, None]:
@@ -195,8 +199,8 @@ class SGP4X(IBaseSensorEx, IDentifier, Iterator):
             SGP4X._check_answer(_buf, _al)
         return _buf
 
-    def _send_command_and_read_answer(self, cmd_code: int, unpack_format: str, with_params: bool=False,
-                                      rel_hum:int=None, temperature:int=None):
+    def _send_command_and_read_answer(self, cmd_code: int, unpack_format: str, with_params: bool = False,
+                                      rel_hum: int = None, temperature: int = None):
         if with_params:
             SGP4X._check_rh_temp(rel_hum, temperature)
             raw_temp = SGP4X._get_raw_temp(temperature)
@@ -209,7 +213,7 @@ class SGP4X(IBaseSensorEx, IDentifier, Iterator):
         _buf = self._read_answer()
         return self._connector.unpack(unpack_format, _buf)
 
-    def get_sensor_id(self)->int:
+    def get_sensor_id(self) -> int:
         """Возвращает идентификатор датчика:
             0 - SGP40;
             1 - SGP41;"""
@@ -258,11 +262,11 @@ class SGP4X(IBaseSensorEx, IDentifier, Iterator):
         sen_id = self.get_sensor_id()
         fmt = "HBHB" if sen_id else "HB"
         _t = self._send_command_and_read_answer(cmd_code=SGP4X._cmd_measure_raw_signal, unpack_format=fmt,
-                                               with_params=True, rel_hum=rel_hum, temperature=temperature)
+                                                with_params=True, rel_hum=rel_hum, temperature=temperature)
         _NOx = _t[2] if sen_id else None
         return measured_values_sgp4x(VOC=_t[0], NOx=_NOx)
 
-    def _send_command(self, cmd_code: int, raw_rel_hum: [None, int]=None, raw_temp: [None, int]=None):
+    def _send_command(self, cmd_code: int, raw_rel_hum: [None, int] = None, raw_temp: [None, int] = None):
         """Передает команду датчику по шине.
         cmd_code - код команды;
         raw_rel_hum - сырое значение относительной влажности;
@@ -277,8 +281,8 @@ class SGP4X(IBaseSensorEx, IDentifier, Iterator):
             _cmd_buf[2:4] = raw_rel_hum.to_bytes(2, _bo)
             _cmd_buf[5:7] = raw_temp.to_bytes(2, _bo)
             #
-            _cmd_buf[4] = _calc_crc(_cmd_buf[2:4])
-            _cmd_buf[7] = _calc_crc(_cmd_buf[5:7])
+            _cmd_buf[4] = SGP4X._calc_crc(_cmd_buf[2:4])
+            _cmd_buf[7] = SGP4X._calc_crc(_cmd_buf[5:7])
         else:
             _cmd_buf = cmd_code.to_bytes(2, _bo)
         #

@@ -19,7 +19,7 @@ if __name__ == '__main__':
     # ESP32-C3 не имеет аппаратного I2C. Там, где он есть, используйте I2C вместо SoftI2C!
     bus = SoftI2C(sda=Pin(sda_pin), scl=Pin(scl_pin), freq=400_000)
     adaptor = I2cAdapter(bus)
-    sensor = sgp4Xmod.SGP4X(adapter=adaptor, address=0x59, check_crc=True, sensor_id = 0)
+    sensor = sgp4Xmod.SGP4X(adapter=adaptor, address=0x59, check_crc=True, sensor_id = 1)
     # 3.6 Поведение датчика при запуске
     # Датчик начинает включаться после достижения порогового напряжения включения 1,7 В и переходит в режим ожидания максимум через 0,6 мс.
     # В этом состоянии датчик готов к приему команд от ведущего устройства!
@@ -37,6 +37,7 @@ if __name__ == '__main__':
         sleep_ms(100)
         try:
             # Если вы перегреете датчик, он сломается навсегда! 10 секунд максимум (см. документацию!)
+            print("conditioning...")
             for _ in range(3):
                 if 0 == sensor.get_sensor_id():
                     break # у SGP40 нет такой команды!
@@ -46,6 +47,7 @@ if __name__ == '__main__':
         finally:
             sensor.turn_heater_off()
         
+        print("conditioning complete.")
         for _ in range(1000):
             _raw = sensor.measure_raw_signal()
             print(f"{_raw}")
