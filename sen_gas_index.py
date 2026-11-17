@@ -254,42 +254,43 @@ class GasIndexAlgorithm:
 
     def get_gas_index(self, sraw: int) -> int:
         """
-        Принимает сырое значение sraw (int) и возвращает индекс газа (_GAS_INDEX_MIN.._GAS_INDEX_MAX).
-        В первые 45 секунд прогрева (_INITIAL_BLACKOUT) возвращает 0.
+        Принимает сырое значение sraw (int) и возвращает газовый индекс (_GAS_INDEX_MIN.._GAS_INDEX_MAX).
+        В первые _INITIAL_BLACKOUT секунд прогрева возвращает 0.
         """
+        if sraw <= 0:
+            return 0
+
         if self.uptime <= _INITIAL_BLACKOUT:
             self.uptime += self.sampling_interval
-        elif self.uptime < (_INITIAL_BLACKOUT + self.sampling_interval):
-            self._mve_initialized = False
+            if self.uptime > _INITIAL_BLACKOUT:
+                # в момент завершения прогрева сброс фильтров,
+                # чтобы начальный разогрев от 20500 до 27500+ не сместил базовую линию!
+                self._mve_initialized = False
+                self._lp_initialized = False
 
         sraw_val = float(sraw) - self.sraw_minimum
 
-        if self.algorithm_type == ALGORITHM_TYPE_NOX and self.uptime <= _INITIAL_BLACKOUT:
-            self._adaptive_lowpass(sraw_val)
+        if self.uptime <= _INITIAL_BLACKOUT:
+            self.sraw = self._adaptive_lowpass(sraw_val)
             self.gas_index = 0
             return 0
 
-        if self.uptime > _INITIAL_BLACKOUT:
-            self._mean_variance_estimator(sraw_val, self.gas_index)
-            self.sraw = self._adaptive_lowpass(sraw_val)
-        else:
-            self.sraw = self._adaptive_lowpass(sraw_val)
-            self._mean_variance_estimator(sraw_val, 0.0)
-            self.gas_index = 0
-            return 0
+        # обновление адаптивного ФНЧ (на 1+_INITIAL_BLACKOUT секунде он инициализируется текущим sraw_val)
+        self.sraw = self._adaptive_lowpass(sraw_val)
+
+        # Обновление оценки среднего и дисперсии по сглаженному значению
+        self._mean_variance_estimator(self.sraw, float(self.gas_index))
 
         mve_mean = self._mve_mean + self._mve_sraw_offset
-        mve_std = self._mve_std + self._sraw_std_bonus
-        if self.algorithm_type == ALGORITHM_TYPE_NOX:
-            mve_std = _SRAW_STD_NOX
+        mve_std = _SRAW_STD_NOX if self.algorithm_type == ALGORITHM_TYPE_NOX else (self._mve_std + self._sraw_std_bonus)
 
         if mve_std < _SRAW_STD_MIN:
             mve_std = _SRAW_STD_MIN
 
-        gas_index_f = ((mve_mean - self.sraw) / mve_std) * _INDEX_GAIN + self.index_offset
         if self.algorithm_type == ALGORITHM_TYPE_NOX:
             gas_index_f = ((self.sraw - mve_mean) / mve_std) * _INDEX_GAIN + self.index_offset
-
+        else:
+            gas_index_f = ((mve_mean - self.sraw) / mve_std) * _INDEX_GAIN + self.index_offset
 
         if gas_index_f < _GAS_INDEX_MIN:
             gas_index_f = _GAS_INDEX_MIN
