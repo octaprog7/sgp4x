@@ -1,11 +1,11 @@
 """
-MicroPython SPG4X sensor 'driver'
+MicroPython SGP4X sensor 'driver'
 """
 # micropython
 # MIT license
 # Copyright (c) 2025 Roman Shevchik   kolbasilyvasily@yandex.ru
 
-# from micropython import const
+from micropython import const
 from collections import namedtuple
 from sensor_pack_2 import bus_service
 from sensor_pack_2.base_sensor import DeviceEx, IDentifier, Iterator, check_value
@@ -20,30 +20,33 @@ serial_number_sgp4x = namedtuple("serial_number_sgp4x", "word_0 word_1 word_2")
 # raw - если Истина, то поля VOX (летучие органические вещества) и NOx (оксиды азота (NO и NO2), образующиеся при горении) содержат сырые(!) данные,
 # которые требуется обработать c помощью Sensirion’s Gas Index Algorithm (https://pypi.org/project/sensirion-gas-index-algorithm/);
 measured_values_sgp4x = namedtuple("measured_values_sgp4x", "VOC NOx")
+# параметры ответа от датчика
+answer_params_sgp4x = namedtuple("answer_params_sgp4x", "length wait_time")
+
+# Команды датчика
+# для SGP41!; Эта команда запускает кондиционирование, то есть пиксель VOC будет работать при той же температуре,
+# что и при вызове команды sgp41_measure_raw_signals, в то время как пиксель NOx будет работать при другой температуре
+# для кондиционирования. Ответ от датчика 3 байта. Время ожидания x/50 мс.
+_cmd_execute_conditioning = const(0x2612)
+# Эта команда запускает/продолжает режим измерения VOC, и возвращает измеренный необработанный сигнал RAW_VOC
+# в виде 2 байтов (+ 1 байт CRC). Ответ от датчика 3 байта. Время ожидания 30/50 мс.
+_cmd_sgp40_measure_raw_signal = const(0x260F)
+_cmd_sgp41_measure_raw_signal = const(0x2619)
+# Эта команда запускает встроенную самопроверку целостности как нагревателя, так и MOX-материала.
+# Ответ от датчика 3 (для SGP40) или 6 (для SGP41) байт. Время ожидания 320 мс.
+_cmd_execute_self_test = const(0x280E)
+# Эта команда выключает нагреватель и останавливает измерение. Датчик переходит в режим ожидания.
+# Ответ от датчика 0 байт. Время ожидания 1 мс.
+_cmd_turn_heater_off = const(0x3615)
+# Эта команда выдает десятичный серийный номер датчика.
+# Ответ от датчика 9 байт. Время ожидания 1 мс.
+_cmd_get_serial_number = const(0x3682)
 
 
 # IBaseSensorEx
 class SGP4X(IDentifier, Iterator):
     """Программное представление SGP4X - цифровых датчиков качества воздуха.
      Измеряет летучие органические соединения (ЛОС) и оксиды азота (NOx, только SGP41)."""
-    # для SGP41!; Эта команда запускает кондиционирование, то есть пиксель VOC будет работать при той же температуре,
-    # что и при вызове команды sgp41_measure_raw_signals, в то время как пиксель NOx будет работать при другой температуре
-    # для кондиционирования. Ответ от датчика 3 байта. Время ожидания x/50 мс.
-    _cmd_execute_conditioning = 0x2612
-    # Эта команда запускает/продолжает режим измерения VOC, и возвращает измеренный необработанный сигнал RAW_VOC
-    # в виде 2 байтов (+ 1 байт CRC). Ответ от датчика 3 байта. Время ожидания 30/50 мс.
-    _cmd_measure_raw_signal = 0x260F
-    # Эта команда запускает встроенную самопроверку целостности как нагревателя, так и MOX-материала.
-    # Ответ от датчика 3 (для SGP40) или 6 (для SGP41) байт. Время ожидания 320 мс.
-    _cmd_execute_self_test = 0x280E
-    # Эта команда выключает нагреватель и останавливает измерение. Датчик переходит в режим ожидания.
-    # Ответ от датчика 0 байт. Время ожидания 1 мс.
-    _cmd_turn_heater_off = 0x3615
-    # Эта команда выдает десятичный серийный номер датчика.
-    # Ответ от датчика 9 байт. Время ожидания 1 мс.
-    _cmd_get_serial_number = 0x3682
-    # параметры ответа от датчика
-    answer_params_sgp4x = namedtuple("answer_params_sgp4x", "length wait_time")
 
     @staticmethod
     def _calc_crc(sequence: bytes) -> int:
@@ -83,32 +86,31 @@ class SGP4X(IDentifier, Iterator):
         """Возвращает параметры ответа от датчика по коду команды cmd_code и id датчика. 0 - SGP40, 1 - SGP41, ... ."""
         _wt, _l = None, None
 
-        if SGP4X._cmd_turn_heater_off == cmd_code:
+        if _cmd_turn_heater_off == cmd_code:
             _l = 0
             _wt = 1
-        if SGP4X._cmd_execute_self_test == cmd_code:
+        if _cmd_execute_self_test == cmd_code:
             _l = 3
             _wt = 320
-        if 1 == sensor_id and SGP4X._cmd_execute_conditioning == cmd_code:
-            _l = 3  # SGP41
+        if 1 == sensor_id and _cmd_execute_conditioning == cmd_code:
+            _l = 3  # SGP41 conditioning: возвращает RAW_VOC (3 байта), ожидание результатов 50 мс
             _wt = 50
-        if SGP4X._cmd_measure_raw_signal == cmd_code:
-            if 0 == sensor_id:
-                _l = 3  # для SGP40
-                _wt = 30
-            else:
-                _l = 6  # для SGP4Х
-                _wt = 50
-        if SGP4X._cmd_get_serial_number == cmd_code:
+        if 0 == sensor_id and _cmd_sgp40_measure_raw_signal == cmd_code:
+            _l = 3  # SGP40: возвращает RAW_VOC (3 байта), ожидание результатов 30 мс
+            _wt = 30
+        if 1 == sensor_id and _cmd_sgp41_measure_raw_signal == cmd_code:
+            _l = 6  # SGP41: возвращает RAW_VOC (6 байт), ожидание результатов 50 мс
+            _wt = 50
+        if _cmd_get_serial_number == cmd_code:
             _l = 9
             _wt = 1
 
         if _wt is None or _l is None:
             raise ValueError(f"Неверный код команды: {cmd_code} или sensor id: {sensor_id}!")
-        return SGP4X.answer_params_sgp4x(length=_l, wait_time=_wt)
+        return answer_params_sgp4x(length=_l, wait_time=_wt)
 
     @staticmethod
-    def _get_data_place(answ_length: int, data: bool = True) -> [None, iter]:
+    def _get_data_place(answ_length: int, data: bool = True) -> None | range:
         """Возвращает диапазон индексов байт в буфере с ответом от датчика,
         содержащих данные (data is True) или CRC (data is False)."""
         check_value(answ_length, (0, 3, 6, 9), f"Неверная длина ответа в байтах: {answ_length}!")
@@ -121,6 +123,7 @@ class SGP4X(IDentifier, Iterator):
                 yield range(_start, 2 + _start)
             else:  # (2, 3), (5, 6), (8, 9)  - индексы CRC
                 yield range(2 + _start, 3 + _start)
+        return None
 
     @staticmethod
     def _check_answer_length(answ_length: int):
@@ -128,16 +131,18 @@ class SGP4X(IDentifier, Iterator):
                     error_msg=f"Неверная длина ответа в байтах: {answ_length}!")
 
     @staticmethod
-    def _check_rh_temp(rh: [None, int], temp: [None, int]):
+    def _check_rh_temp(rh: None | int, temp: None | int):
         """Проверяет относительную влажность (rh в %) и температуру (temp в гр. Цельсия)
         на принадлежность к верному диапазону 0..100 и -45..130 соответственно."""
+        if (rh is None) == (temp is None):
+            raise ValueError("Нужно передать только один параметр: либо rh, либо temp!")
         _val, _valid_rng = None, None
-        _err_msg = f"Значение {_val} вне допустимого диапазона {_valid_rng}!"
-        if rh:
+        if rh is not None:
             _val, _valid_rng = rh, range(101)
-        if temp:
+        if temp is not None:
             _val, _valid_rng = temp, range(-45, 131)
         #
+        _err_msg = f"Значение {_val} вне допустимого диапазона {_valid_rng}!"
         check_value(_val, _valid_rng, _err_msg)
 
     @staticmethod
@@ -145,7 +150,7 @@ class SGP4X(IDentifier, Iterator):
         """Возвращает сырое значение относительной влажности.
         rel_hum - значение относительной влажности в %;"""
         SGP4X._check_rh_temp(rh=rel_hum, temp=None)
-        return round(65.35 * rel_hum)
+        return round(655.35 * rel_hum)
 
     @staticmethod
     def _get_raw_temp(temperature: int) -> int:
@@ -154,7 +159,7 @@ class SGP4X(IDentifier, Iterator):
         SGP4X._check_rh_temp(rh=None, temp=temperature)
         return round(374.4857142857 * (45 + temperature))
 
-    def _get_buf_by_answ_length(self, answ_length: int) -> [None, bytes]:
+    def _get_buf_by_answ_length(self, answ_length: int) -> None | bytes:
         """Возвращает буфер по длине ответа от датчика в байтах - answ_length."""
         SGP4X._check_answer_length(answ_length)
         #
@@ -183,7 +188,7 @@ class SGP4X(IDentifier, Iterator):
                     f"Неверная CRC! Вычислено: {calculated_crc}. CRC из буфера: {crc_from_buf}; Длина буфера: {len(answer)} байт.")
         return True
 
-    def _read_answer(self) -> [bytes, None]:
+    def _read_answer(self) -> bytes | None:
         """Читает ответ на команду, переданную методом _send_command.
         Возвращает ссылку на буфер с принятыми данными.
         Проверяет CRC"""
@@ -202,7 +207,6 @@ class SGP4X(IDentifier, Iterator):
     def _send_command_and_read_answer(self, cmd_code: int, unpack_format: str, with_params: bool = False,
                                       rel_hum: int = None, temperature: int = None):
         if with_params:
-            SGP4X._check_rh_temp(rel_hum, temperature)
             raw_temp = SGP4X._get_raw_temp(temperature)
             raw_rh = SGP4X._get_raw_relhum(rel_hum)
             self._send_command(cmd_code, raw_rh, raw_temp)
@@ -221,22 +225,22 @@ class SGP4X(IDentifier, Iterator):
 
     def get_id(self) -> serial_number_sgp4x:
         """Возвращает серийный номер датчика. Три двухбайтных слова."""
-        _t = self._send_command_and_read_answer(cmd_code=SGP4X._cmd_get_serial_number, unpack_format="HBHBH")
+        _t = self._send_command_and_read_answer(cmd_code=_cmd_get_serial_number, unpack_format="HBHBH")
         return serial_number_sgp4x(word_0=_t[0], word_1=_t[2], word_2=_t[4])
 
     def turn_heater_off(self):
         """Отключает нагреватель датчика."""
-        self._send_command(SGP4X._cmd_turn_heater_off)
+        self._send_command(_cmd_turn_heater_off)
 
     def execute_self_test(self) -> int:
         """Команда execute_self_test выполняет встроенное самотестирование датчика SGP4X, проверяя целостность нагревательной
         пластины и MOX-материала. После выполнения теста датчик возвращает результат в виде 2-байтового значения:
-            0xD400 — все тесты пройдены успешно
-            0x4B00 — один или несколько тестов завершились с ошибкой.
+            0xD400 - все тесты пройдены успешно
+            0x4B00 - один или несколько тестов завершились с ошибкой.
 
         Если команда вызывается в режиме ожидания (idle mode), датчик после теста вернется в этот же режим.
         При вызове во время режима измерения VOC нагреватель останется включенным"""
-        _t = self._send_command_and_read_answer(cmd_code=SGP4X._cmd_execute_self_test, unpack_format="HB")
+        _t = self._send_command_and_read_answer(cmd_code=_cmd_execute_self_test, unpack_format="HB")
         return _t[0]
 
     def execute_conditioning(self, rel_hum: int = 50, temperature: int = 25) -> measured_values_sgp4x:
@@ -244,7 +248,9 @@ class SGP4X(IDentifier, Iterator):
         В течение 5 мс после отправки любой из двух команд, ток потребления возрастает на 20%!
         Рекомендуется выполнять эту команду в течение 10 с,
         однако нельзя превышать это время, чтобы избежать повреждения датчика!"""
-        t = self._send_command_and_read_answer(cmd_code=SGP4X._cmd_execute_conditioning, unpack_format="HB",
+        if 0 == self.get_sensor_id():
+            raise ValueError("Команду поддерживает только SGP41!")
+        t = self._send_command_and_read_answer(cmd_code=_cmd_execute_conditioning, unpack_format="HB",
                                                with_params=True, rel_hum=rel_hum, temperature=temperature)
         return measured_values_sgp4x(VOC=t[0], NOx=None)
 
@@ -260,19 +266,28 @@ class SGP4X(IDentifier, Iterator):
         Отправка команд sgp41_execute_conditioning и sgp41_measure_raw_signals переводит датчик в режим непрерывной работы.
         В течение 5 мс после отправки любой из двух команд, ток потребления возрастает на 20%!"""
         sen_id = self.get_sensor_id()
-        fmt = "HBHB" if sen_id else "HB"
-        _t = self._send_command_and_read_answer(cmd_code=SGP4X._cmd_measure_raw_signal, unpack_format=fmt,
+        # SGP40
+        cmd = _cmd_sgp40_measure_raw_signal
+        fmt = "HB"
+        if sen_id:  # SGP41
+            cmd = _cmd_sgp41_measure_raw_signal
+            fmt = "HBHB"
+
+        _t = self._send_command_and_read_answer(cmd_code=cmd, unpack_format=fmt,
                                                 with_params=True, rel_hum=rel_hum, temperature=temperature)
         _NOx = _t[2] if sen_id else None
         return measured_values_sgp4x(VOC=_t[0], NOx=_NOx)
 
-    def _send_command(self, cmd_code: int, raw_rel_hum: [None, int] = None, raw_temp: [None, int] = None):
+    def _send_command(self, cmd_code: int, raw_rel_hum: None | int = None, raw_temp: None | int = None):
         """Передает команду датчику по шине.
         cmd_code - код команды;
         raw_rel_hum - сырое значение относительной влажности;
         raw_temp - сырое значение температуры воздуха;"""
+        if (raw_rel_hum is None) != (raw_temp is None):
+            raise ValueError("Нужно передать оба параметра (raw_rel_hum и raw_temp) или ни одного!")
+
         _cmd_buf = None
-        _cmd_with_params = all((raw_rel_hum, raw_temp))
+        _cmd_with_params = raw_rel_hum is not None and raw_temp is not None
         _bo = self._byte_order[0]
         if _cmd_with_params:
             # Должны быть заданы и температура и отн. влажность!

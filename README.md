@@ -1,68 +1,102 @@
 # SGP4X
-Модуль MicroPython для работы с датчиком качества окружающего воздуха SGP40/SGP41 от Sensirion.
 
-# Назначение
-SGP40 представляет собой цифровой датчик газа, предназначенный для контроля качества воздуха в помещениях! 
-Его основная задача — измерение уровня летучих органических соединений (ЛОС) в воздухе.
+[**На русском языке**](README_RU.md)
 
-## Особенности SGP40:
-    * интерфейс I2C
-    * встроенный микронагреватель
-    * показания качества воздуха с компенсацией влажности
-    * устойчивость к загрязняющим веществам
+A pure MicroPython driver and Gas Index Algorithm implementation for the **Sensirion SGP40 and SGP41** indoor air quality sensors (VOC and NOx).
 
-# Применение
-1. Очистители воздуха.
-2. Системы вентиляции с автоматическим управлением.
-3. Умные системы контроля микроклимата.
+Unlike other basic wrappers that only output raw sensor ticks (`SRAW`), this repository includes a lightweight, pure-MicroPython port of the **Sensirion Gas Index Algorithm (`gas_index.py`)**, allowing you to calculate ready-to-use **VOC Index (1–500)** and **NOx Index (1–500)** directly on microcontrollers (ESP32, RP2040, STM32, etc.) without needing a full CPython environment.
 
-# SGP41
-## Особенности SGP41:
-1. Два датчика в одном корпусе.
-2. Возможность автоматического управления очистительными системами.
-3. Мониторинг потенциально опасных концентраций загрязняющих веществ.
+## Key Features
+* **Full SGP40 & SGP41 Support:** Reads raw signals (`SRAW_VOC` and `SRAW_NOx`) over I2C with CRC-8 verification.
+* **Built-in Sensirion Gas Index Algorithm:** Converts raw ticks into standardized VOC (1–500, baseline 100) and NOx (1–500, baseline 1) indices directly on the microcontroller.
+* **Temperature & Humidity Compensation:** Supports passing external temperature and relative humidity values for improved sensor accuracy.
+* **Memory Optimized:** Uses `micropython.const()` and module-level constants to minimize RAM footprint.
 
-## Технические характеристики SGP41:
-    * Диапазон измерения ЛОС: до 1000 ppm (эквивалент этанола)
-    * Диапазон измерения NOx: до 10 ppm (эквивалент NO2)
-    * Время отклика: менее 10 секунд для ЛОС, менее 250 секунд для NOx
+---
 
-## Области применения SGP41:
-    * Профессиональные очистители воздуха
-    * Системы вентиляции и воздухообмена
-    * Кухонные вытяжки
-    * Умные системы контроля качества воздуха
+## Sensors Overview
 
-# Дополнительная обработка данных
-Без дополнительной обработки, показания SGP40 и SGP41 использовать нельзя!
-Требуется программная обработка сырых(!) данных для получения индекса VOC/NOx, пригодного для анализа и отображения пользователю. 
-Рекомендуется реализовать компенсацию по влажности и температуре для повышения точности.
+### SGP40
+The SGP40 is a digital gas sensor designed for indoor air quality monitoring, primarily measuring volatile organic compounds (VOCs).
+* **Interface:** I2C
+* **Features:** Integrated micro-hotplate, humidity-compensated readings, high resistance to siloxanes and contaminating substances.
+* **Applications:** Air purifiers, demand-controlled ventilation systems, smart thermostats and climate control.
 
-На данный момент дополнительную обработку сырых данных от SGP40/41 в программах, использующих Micropython, сделать невозможно!
-Так как Sensirion Gas Index Algorithm использует полноценный Python 3.6 и выше!
+### SGP41
+The SGP41 integrates two metal-oxide (MOx) sensing elements in a single package to monitor both VOCs and oxidizing gases (NOx).
+* **VOC measurement range:** 0 to 1,000 ppm (ethanol equivalent), response time < 10 s.
+* **NOx measurement range:** 0 to 10 ppm (NO₂ equivalent), response time < 250 s.
+* **Applications:** Professional air purifiers, kitchen range hoods, HVAC air exchange systems, smart air quality monitors.
 
-## Sensirion’s Gas Index Algorithm 
-https://pypi.org/project/sensirion-gas-index-algorithm/
+---
 
-# Питание
-Напряжение питания SGP4X 1,7..3,6 Вольта!
+## Gas Index Algorithm (`gas_index.py`)
 
-# Прошивка
-Загрузите прошивку MicroPython на плату NANO, PICO RP2040 (ESP и т. д.), а затем файлы: main.py, sgp4Xmod.py и папку sensor_pack_2 полностью. 
-Затем откройте main.py в своей IDE и запустите его.
+Raw readings (`SRAW`) from the SGP40/SGP41 cannot be used directly as absolute ppm values. They must be processed through the **Sensirion Gas Index Algorithm** to adapt to the sensor's baseline and output a relative index from **1 to 500**:
+* **VOC Index:** `100` represents average clean indoor air; `< 100` indicates cleaner air (e.g., after ventilation); `> 100` indicates increased VOC levels (solvents, cooking, human respiration).
+* **NOx Index:** `1` represents clean air without nitrogen oxides; `> 1` indicates the presence of combustion byproducts, gas stove emissions, or traffic exhaust.
 
-# Подключение
-Просто подключите плату c SGP4X к Arduino, ESP или любой другой плате с прошивкой MicroPython.
+> **Important:** The algorithm expects a strict **1.0-second sampling interval** (`sampling_interval=1.0`). During the first **45 seconds** after startup (initial blackout/warm-up period), `get_gas_index()` returns `0` while internal filters stabilize.
 
-# Внимание
-Я использовал плату с датчиком SGP41. В ответе на команду sgp40_measure_raw_signal с датчика было считано шесть
-байт. Первые три байта содержат ЛОС, вторая тройка содержит NOx.
-С первой тройкой было все в порядке, CRC, принятый от датчика и рассчитанный CRC совпали.
-Вторая тройка байт была 0xFF, 0xFF, 0xFF. Естественно, код выбросил исключение о неверном CRC.
-Возможно мой датчик поддельный, поэтому, если у вас подобная ситуация, 
-в конструкторе указывайте sensor_id = 0 (как будто это SGP40) а check_crc должен быть в Истина всегда!
+Based on the official [Sensirion Gas Index Algorithm](https://pypi.org/project/sensirion-gas-index-algorithm/).
 
-# Картинки
+---
 
-## Результат работы
-![alt text](https://github.com/octaprog7/sgp4x/blob/master/pics/meas_vals.png)
+## Quick Start
+
+### 1. Hardware Connection & Power
+* **Supply Voltage:** `1.7V` to `3.6V` (3.3V logic recommended).
+* **Wiring:** Connect `VCC`, `GND`, `SDA`, and `SCL` of the SGP40/SGP41 breakout board to the I2C pins of your MicroPython board.
+
+### 2. Installation
+Flash MicroPython firmware onto your board (ESP32, Raspberry Pi Pico / RP2040, STM32, etc.) and upload the following files to the root directory:
+* `sgp4Xmod.py`
+* `gas_index.py`
+* `main.py`
+* `sensor_pack_2/` (entire folder)
+
+### 3. Usage Example
+
+```python
+import time
+from machine import I2C, Pin
+from sgp4Xmod import SGP4X
+from sen_gas_index import GasIndexAlgorithm, ALGORITHM_TYPE_VOC, ALGORITHM_TYPE_NOX
+
+# Initialize I2C (adjust pins for your board)
+i2c = I2C(0, scl=Pin(22), sda=Pin(21), freq=100_000)
+sensor = SGP4X(i2c)
+
+# Initialize VOC and NOx index processors (1-second sampling interval)
+voc_algo = GasIndexAlgorithm(ALGORITHM_TYPE_VOC, sampling_interval=1.0)
+nox_algo = GasIndexAlgorithm(ALGORITHM_TYPE_NOX, sampling_interval=1.0)
+
+while True:
+    t_start = time.ticks_ms()
+
+    # Read raw ticks from sensor
+    raw_data = sensor.get_measurement_result()
+
+    if isinstance(raw_data, tuple):  # SGP41 returns (sraw_voc, sraw_nox)
+        sraw_voc, sraw_nox = raw_data
+        voc_idx = voc_algo.get_gas_index(sraw_voc)
+        nox_idx = nox_algo.get_gas_index(sraw_nox)
+        print(f"VOC: {sraw_voc} (Index: {voc_idx}) | NOx: {sraw_nox} (Index: {nox_idx})")
+    else:  # SGP40 returns sraw_voc only
+        voc_idx = voc_algo.get_gas_index(raw_data)
+        print(f"VOC: {raw_data} (Index: {voc_idx})")
+
+    # Maintain a strict 1-second loop interval
+    elapsed = time.ticks_diff(time.ticks_ms(), t_start)
+    if elapsed < 1000:
+        time.sleep_ms(1000 - elapsed)
+```
+
+---
+
+## Troubleshooting Note (SGP41 returning `0xFF, 0xFF, 0xFF`)
+When reading 6 bytes from some third-party SGP41 breakout boards, the first 3 bytes (VOC + CRC) may be valid while the second 3 bytes (NOx + CRC) return `0xFF, 0xFF, 0xFF`, causing a CRC exception. This commonly happens if the module actually houses an **SGP40** chip remarked as an SGP41.
+* **Workaround:** Pass `sensor_id=0` to the `SGP4x` constructor (forcing SGP40 mode) and keep `check_crc=True`.
+
+## Output Example
+![Measurement Output](https://github.com/octaprog7/sgp4x/blob/master/pics/meas_vals.png)
