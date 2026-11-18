@@ -1,5 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # micropython
-# MIT license
 
 from micropython import const
 from time import sleep_ms, ticks_ms, ticks_diff

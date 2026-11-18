@@ -116,3 +116,17 @@ When reading 6 bytes from some third-party SGP41 breakout boards, the first 3 by
 
 ### 3. Live VOC Index Response (Exhaling on the Sensor)
 ![SGP40 Live Response](https://github.com/octaprog7/sgp4x/blob/master/pics/reaction_to_breathing.png)
+
+## License & Attribution
+
+This project is licensed under the **MIT License**.
+
+The `sen_gas_index.py` module is a Python/MicroPython port of the official 
+[Sensirion Gas Index Algorithm (v3.2.0)](https://github.com/Sensirion/gas-index-algorithm).
+
+* **Original Copyright:** Copyright (c) 2022, Sensirion AG
+* **Original License:** 3-Clause BSD License
+* **Port Copyright:** Copyright (c) 2024, Roman Shevchik
+
+The original 3-Clause BSD license requires retaining the copyright notice. 
+The full original license text and copyright notices are preserved in the `sen_gas_index.py` source file.
